@@ -1,83 +1,67 @@
-import { verifyApiKey, sendEmail, corsHeaders } from '../lib/emailUtils.js';
+import nodemailer from 'nodemailer';
+
+const createTransporter = () => {
+    return nodemailer.createTransport({
+        host: process.env.EMAIL_HOST || "smtp.gmail.com",
+        port: parseInt(process.env.EMAIL_PORT || '587'),
+        secure: parseInt(process.env.EMAIL_PORT || '587') === 465,
+        auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS,
+        },
+        tls: { rejectUnauthorized: false },
+        connectionTimeout: 30000,
+        greetingTimeout: 15000,
+        socketTimeout: 30000
+    });
+};
+
+const verifyApiKey = (req) => {
+    const apiKey = req.headers['x-api-key'];
+    return apiKey === process.env.EMAIL_API_KEY;
+};
+
+const sendEmail = async (mailOptions) => {
+    const transporter = createTransporter();
+    await transporter.verify();
+    const info = await transporter.sendMail({ from: process.env.EMAIL_USER, ...mailOptions });
+    return { success: true, messageId: info.messageId };
+};
 
 export default async function handler(req, res) {
-    // Handle CORS preflight
-    if (req.method === 'OPTIONS') {
-        return res.status(200).set(corsHeaders).end();
-    }
 
-    // Only allow POST
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed' });
-    }
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-KEY');
 
-    // Verify API key
-    if (!verifyApiKey(req)) {
-        return res.status(401).json({ error: 'Unauthorized - Invalid API key' });
-    }
+    if (req.method === 'OPTIONS') return res.status(200).end();
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+    if (!verifyApiKey(req)) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
-        const {
-            userEmail,
-            userName = 'there',
-            alertTitle,
-            jobs = []
-        } = req.body;
+        const { userEmail, userName = 'there', alertTitle, jobs = [] } = req.body;
 
-        if (!userEmail) {
-            return res.status(400).json({ error: 'userEmail is required' });
-        }
+        if (!userEmail) return res.status(400).json({ error: 'userEmail is required' });
+        if (!jobs.length) return res.status(400).json({ error: 'jobs array is required' });
 
-        if (!jobs.length) {
-            return res.status(400).json({ error: 'jobs array is required and must not be empty' });
-        }
-
-        console.log(`📧 Sending job alert to: ${userEmail}, Jobs: ${jobs.length}`);
-
-        // Format salary display
         const formatSalary = (salary) => {
             if (!salary || (!salary.min && !salary.max)) return null;
             const currency = salary.currency || 'USD';
-            if (salary.min && salary.max) {
-                return `${currency} ${salary.min.toLocaleString()} - ${salary.max.toLocaleString()}`;
-            }
+            if (salary.min && salary.max) return `${currency} ${salary.min.toLocaleString()} - ${salary.max.toLocaleString()}`;
             return `${currency} ${(salary.min || salary.max).toLocaleString()}`;
         };
 
-        // Generate job list HTML
         const jobListHtml = jobs.map((job, index) => {
             const salary = formatSalary(job.salary);
-            const jobDetails = [job.location, job.employmentType, salary, job.isRemote ? '🏠 Remote' : null].filter(Boolean).join(' • ');
+            const jobDetails = [job.location, job.employmentType, salary, job.isRemote ? 'Remote' : null].filter(Boolean).join(' • ');
             return `
-        <tr>
-          <td style="padding: 0 0 16px 0;">
-            <table width="100%" cellpadding="0" cellspacing="0" style="background: linear-gradient(135deg, #1c1c1e 0%, #2c2c2e 100%); border-radius: 16px; border: 1px solid #3a3a3c; overflow: hidden;">
-              <tr>
-                <td style="padding: 24px;" class="mobile-padding">
-                  <table width="100%" cellpadding="0" cellspacing="0">
-                    <tr>
-                      <td class="mobile-stack" style="vertical-align: top;">
-                        <div style="display: inline-block; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: #ffffff; width: 28px; height: 28px; border-radius: 8px; text-align: center; line-height: 28px; font-size: 13px; font-weight: 700; margin-bottom: 12px;">
-                          ${index + 1}
-                        </div>
-                        <h3 style="margin: 0 0 8px 0; color: #ffffff; font-size: 18px; font-weight: 700; line-height: 1.4;" class="mobile-job-title">${job.title}</h3>
-                        <p style="margin: 0 0 12px 0; color: #a78bfa; font-size: 15px; font-weight: 600;">${job.company}</p>
-                        ${jobDetails ? `<p style="margin: 0 0 20px 0; color: #8e8e93; font-size: 13px; line-height: 1.6;">${jobDetails}</p>` : ''}
-                        <table width="100%" cellpadding="0" cellspacing="0">
-                          <tr>
-                            <td>
-                              <a href="${job.applyLink}" target="_blank" class="mobile-button" style="display: inline-block; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: #ffffff; padding: 14px 28px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 600; letter-spacing: 0.3px; box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);">Apply Now →</a>
-                            </td>
-                          </tr>
-                        </table>
-                      </td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
+        <div style="margin-bottom: 16px; background: #1c1c1e; border-radius: 12px; padding: 20px; border: 1px solid #333;">
+          <div style="background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; width: 24px; height: 24px; border-radius: 6px; text-align: center; line-height: 24px; font-size: 12px; font-weight: bold; margin-bottom: 10px;">${index + 1}</div>
+          <h3 style="margin: 0 0 6px 0; color: #fff; font-size: 16px;">${job.title}</h3>
+          <p style="margin: 0 0 8px 0; color: #a78bfa; font-size: 14px;">${job.company}</p>
+          ${jobDetails ? `<p style="margin: 0 0 12px 0; color: #888; font-size: 12px;">${jobDetails}</p>` : ''}
+          <a href="${job.applyLink}" style="display: inline-block; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: 600;">Apply Now →</a>
+        </div>
       `;
         }).join('');
 
@@ -86,111 +70,29 @@ export default async function handler(req, res) {
             to: userEmail,
             subject: `🎯 ${jobs.length} New Job${jobs.length > 1 ? 's' : ''} Matching "${alertTitle}"`,
             html: `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>New Job Opportunities</title>
-          <style>
-            * { box-sizing: border-box; }
-            body { margin: 0; padding: 0; }
-            @media only screen and (max-width: 600px) {
-              .email-container { width: 100% !important; padding: 12px !important; }
-              .mobile-padding { padding: 20px 16px !important; }
-              .mobile-text { font-size: 15px !important; line-height: 1.5 !important; }
-              .mobile-title { font-size: 22px !important; }
-              .mobile-job-title { font-size: 16px !important; }
-              .mobile-stack { display: block !important; width: 100% !important; }
-              .mobile-button { display: block !important; width: 100% !important; text-align: center !important; padding: 16px 24px !important; font-size: 16px !important; margin-top: 8px !important; }
-            }
-          </style>
-        </head>
-        <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #000000; line-height: 1.6;">
-          <div style="display: none; max-height: 0; overflow: hidden;">
-            ${jobs.length} new job${jobs.length > 1 ? 's' : ''} matching ${alertTitle} • Review opportunities now
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background: #000; padding: 20px;">
+          <div style="background: linear-gradient(135deg, #6366f1, #8b5cf6, #ec4899); padding: 24px; border-radius: 12px 12px 0 0;">
+            <h1 style="color: white; margin: 0 0 4px 0; font-size: 24px;">Velocity</h1>
+            <p style="color: rgba(255,255,255,0.9); margin: 0; font-size: 13px;">Your Job Search Partner</p>
           </div>
-          
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #000000; padding: 40px 20px;">
-            <tr>
-              <td align="center">
-                <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width: 600px; width: 100%; background: linear-gradient(180deg, #1c1c1e 0%, #0a0a0a 100%); border-radius: 16px; border: 1px solid #2c2c2e; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);">
-                  
-                  <tr>
-                    <td style="padding: 32px 40px 24px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%); border-radius: 16px 16px 0 0;" class="mobile-padding">
-                      <table width="100%" cellpadding="0" cellspacing="0">
-                        <tr>
-                          <td>
-                            <h1 style="margin: 0 0 8px 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;" class="mobile-title">Velocity</h1>
-                            <p style="margin: 0; color: rgba(255, 255, 255, 0.9); font-size: 14px; font-weight: 500;">Your Job Search Partner</p>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
-                  
-                  <tr>
-                    <td style="padding: 36px 40px;" class="mobile-padding">
-                      <p style="margin: 0 0 12px 0; color: #ffffff; font-size: 18px; font-weight: 600;">Hello ${userName},</p>
-                      <p style="margin: 0 0 28px 0; color: #a1a1a6; font-size: 16px; line-height: 1.6;" class="mobile-text">
-                        We've found <strong style="color: #ffffff; font-weight: 600;">${jobs.length} new opportunity${jobs.length > 1 ? 's' : ''}</strong> matching your alert:
-                      </p>
-                      
-                      <div style="margin: 0 0 28px 0; padding: 12px 18px; background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%); border-radius: 10px; border: 1px solid rgba(99, 102, 241, 0.3); display: inline-block;">
-                        <p style="margin: 0; color: #a78bfa; font-size: 14px; font-weight: 600;">📌 ${alertTitle}</p>
-                      </div>
-                      
-                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 32px;">
-                        ${jobListHtml}
-                      </table>
-                      
-                      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #2c2c2e;">
-                        <tr>
-                          <td>
-                            <p style="margin: 0 0 8px 0; color: #a1a1a6; font-size: 15px;">Best of luck with your applications,</p>
-                            <p style="margin: 0; color: #ffffff; font-size: 16px; font-weight: 600;">The Velocity Team</p>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
-                  
-                  <tr>
-                    <td style="padding: 28px 40px; background-color: #0a0a0a; border-radius: 0 0 16px 16px; border-top: 1px solid #2c2c2e;" class="mobile-padding">
-                      <p style="margin: 0 0 8px 0; color: #6e6e73; font-size: 13px; line-height: 1.5;">
-                        You're receiving this because you created a job alert on Velocity.
-                      </p>
-                      <p style="margin: 0; color: #48484a; font-size: 12px; line-height: 1.5;">
-                        © ${new Date().getFullYear()} Velocity. All rights reserved.
-                      </p>
-                    </td>
-                  </tr>
-                  
-                </table>
-              </td>
-            </tr>
-          </table>
-        </body>
-        </html>
+          <div style="background: #111; padding: 24px; border-radius: 0 0 12px 12px;">
+            <p style="color: #fff; font-size: 16px; margin: 0 0 8px 0;">Hello ${userName},</p>
+            <p style="color: #aaa; font-size: 14px; margin: 0 0 20px 0;">We found <strong style="color: #fff;">${jobs.length} new job${jobs.length > 1 ? 's' : ''}</strong> matching: <span style="color: #a78bfa; background: rgba(99,102,241,0.2); padding: 4px 10px; border-radius: 6px;">${alertTitle}</span></p>
+            ${jobListHtml}
+            <div style="border-top: 1px solid #333; margin-top: 24px; padding-top: 16px;">
+              <p style="color: #888; font-size: 13px; margin: 0;">Best of luck,<br><strong style="color: #fff;">The Velocity Team</strong></p>
+            </div>
+          </div>
+          <p style="color: #555; font-size: 11px; text-align: center; margin-top: 16px;">© ${new Date().getFullYear()} Velocity</p>
+        </div>
       `,
-            text: `
-Hello ${userName},
-
-We found ${jobs.length} new job opportunity${jobs.length > 1 ? 's' : ''} matching your alert: "${alertTitle}"
-
-${jobs.map((job, i) => `${i + 1}. ${job.title}\n   Company: ${job.company}${job.location ? `\n   Location: ${job.location}` : ''}\n   Apply: ${job.applyLink}`).join('\n\n')}
-
-Best regards,
-The Velocity Team
-      `.trim()
+            text: `Hello ${userName},\n\nWe found ${jobs.length} jobs matching "${alertTitle}":\n\n${jobs.map((j, i) => `${i + 1}. ${j.title} at ${j.company}\n   Apply: ${j.applyLink}`).join('\n\n')}\n\nBest,\nVelocity Team`
         };
 
         const result = await sendEmail(mailOptions);
-        console.log(`✅ Job alert email sent to ${userEmail}: ${result.messageId}`);
-
         return res.status(200).json(result);
     } catch (error) {
-        console.error('Error sending job alert email:', error);
+        console.error('Error:', error);
         return res.status(500).json({ error: error.message });
     }
 }

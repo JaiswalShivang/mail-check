@@ -1,194 +1,97 @@
-import { verifyApiKey, sendEmail, corsHeaders } from '../lib/emailUtils.js';
+import nodemailer from 'nodemailer';
+
+const createTransporter = () => {
+  return nodemailer.createTransport({
+    host: process.env.EMAIL_HOST || "smtp.gmail.com",
+    port: parseInt(process.env.EMAIL_PORT || '587'),
+    secure: parseInt(process.env.EMAIL_PORT || '587') === 465,
+    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+    tls: { rejectUnauthorized: false },
+    connectionTimeout: 30000,
+    greetingTimeout: 15000,
+    socketTimeout: 30000
+  });
+};
+
+const verifyApiKey = (req) => req.headers['x-api-key'] === process.env.EMAIL_API_KEY;
+
+const sendEmail = async (mailOptions) => {
+  const transporter = createTransporter();
+  await transporter.verify();
+  const info = await transporter.sendMail({ from: process.env.EMAIL_USER, ...mailOptions });
+  return { success: true, messageId: info.messageId };
+};
 
 export default async function handler(req, res) {
-    // Handle CORS preflight
-    if (req.method === 'OPTIONS') {
-        return res.status(200).set(corsHeaders).end();
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-KEY');
+
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (!verifyApiKey(req)) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    const { studentEmail, studentName = 'there', challengeTitle, companyName, corporateName, proposedPrice, estimatedDays, feedback = '', chatRoomId, frontendUrl } = req.body;
+
+    if (!studentEmail || !challengeTitle || !companyName || !proposedPrice || !estimatedDays) {
+      return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Only allow POST
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed' });
-    }
+    const FRONTEND_URL = frontendUrl || process.env.FRONTEND_URL || 'http://localhost:5173';
 
-    // Verify API key
-    if (!verifyApiKey(req)) {
-        return res.status(401).json({ error: 'Unauthorized - Invalid API key' });
-    }
-
-    try {
-        const {
-            studentEmail,
-            studentName = 'there',
-            challengeTitle,
-            companyName,
-            corporateName,
-            proposedPrice,
-            estimatedDays,
-            feedback = '',
-            chatRoomId,
-            frontendUrl
-        } = req.body;
-
-        if (!studentEmail) {
-            return res.status(400).json({ error: 'studentEmail is required' });
-        }
-
-        if (!challengeTitle || !companyName || !proposedPrice || !estimatedDays) {
-            return res.status(400).json({ error: 'challengeTitle, companyName, proposedPrice, and estimatedDays are required' });
-        }
-
-        const FRONTEND_URL = frontendUrl || process.env.FRONTEND_URL || 'http://localhost:5173';
-
-        console.log(`📧 Sending proposal approval email to: ${studentEmail}`);
-
-        const mailOptions = {
-            from: `"Velocity Fellowships" <${process.env.EMAIL_USER}>`,
-            to: studentEmail,
-            subject: `🎉 Congratulations! Your Proposal Has Been Accepted`,
-            html: `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Proposal Accepted</title>
-          <style>
-            * { box-sizing: border-box; }
-            body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
-            @media only screen and (max-width: 600px) {
-              .email-container { width: 100% !important; padding: 16px !important; }
-              .mobile-padding { padding: 24px 20px !important; }
-              .mobile-text { font-size: 15px !important; }
-              .mobile-title { font-size: 24px !important; }
-            }
-          </style>
-        </head>
-        <body style="background-color: #f3f4f6; padding: 40px 20px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-            <tr>
-              <td align="center">
-                <table role="presentation" class="email-container" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width: 600px; width: 100%; background: white; border-radius: 16px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); overflow: hidden;">
-                  
-                  <tr>
-                    <td style="padding: 40px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); text-align: center;" class="mobile-padding">
-                      <div style="font-size: 48px; margin-bottom: 16px;">🎉</div>
-                      <h1 style="margin: 0 0 8px 0; color: white; font-size: 28px; font-weight: 700;" class="mobile-title">Proposal Accepted!</h1>
-                      <p style="margin: 0; color: rgba(255, 255, 255, 0.9); font-size: 16px;">Great news from Velocity Fellowships</p>
-                    </td>
-                  </tr>
-                  
-                  <tr>
-                    <td style="padding: 40px;" class="mobile-padding">
-                      <p style="margin: 0 0 24px 0; color: #111827; font-size: 18px; font-weight: 600;">Hello ${studentName},</p>
-                      
-                      <p style="margin: 0 0 24px 0; color: #4b5563; font-size: 16px; line-height: 1.6;" class="mobile-text">
-                        Congratulations! <strong style="color: #111827;">${companyName}</strong> has accepted your proposal for the challenge:
-                      </p>
-                      
-                      <div style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left: 4px solid #10b981; padding: 20px; border-radius: 8px; margin-bottom: 28px;">
-                        <h3 style="margin: 0 0 12px 0; color: #047857; font-size: 18px; font-weight: 600;">${challengeTitle}</h3>
-                        <table width="100%" cellpadding="0" cellspacing="0">
-                          <tr>
-                            <td style="padding: 8px 0; color: #065f46; font-size: 14px;">
-                              <strong>💰 Agreed Price:</strong> ₹${proposedPrice.toLocaleString()}
-                            </td>
-                          </tr>
-                          <tr>
-                            <td style="padding: 8px 0; color: #065f46; font-size: 14px;">
-                              <strong>⏱️ Timeline:</strong> ${estimatedDays} day${estimatedDays > 1 ? 's' : ''}
-                            </td>
-                          </tr>
-                          <tr>
-                            <td style="padding: 8px 0; color: #065f46; font-size: 14px;">
-                              <strong>🏢 Company:</strong> ${companyName}
-                            </td>
-                          </tr>
-                        </table>
-                      </div>
-                      
-                      ${feedback ? `
-                      <div style="background: #f9fafb; border-left: 4px solid #6366f1; padding: 20px; border-radius: 8px; margin-bottom: 28px;">
-                        <h4 style="margin: 0 0 12px 0; color: #4338ca; font-size: 16px; font-weight: 600;">Message from ${corporateName}:</h4>
-                        <p style="margin: 0; color: #4b5563; font-size: 15px; line-height: 1.6;">${feedback}</p>
-                      </div>
-                      ` : ''}
-                      
-                      <div style="background: #eff6ff; border-radius: 8px; padding: 20px; margin-bottom: 28px;">
-                        <h3 style="margin: 0 0 16px 0; color: #1e40af; font-size: 18px; font-weight: 600;">📋 Next Steps:</h3>
-                        <ul style="margin: 0; padding-left: 20px; color: #1e3a8a; font-size: 15px; line-height: 1.8;">
-                          <li>Start a conversation with ${companyName} to discuss project details</li>
-                          <li>Clarify requirements and deliverables</li>
-                          <li>Set up milestones and checkpoints</li>
-                          <li>Begin working on the project</li>
-                        </ul>
-                      </div>
-                      
-                      <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom: 28px;">
-                        <tr>
-                          <td align="center">
-                            <a href="${FRONTEND_URL}/fellowship/messages/${chatRoomId}" 
-                               style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 16px 32px; border-radius: 10px; text-decoration: none; font-size: 16px; font-weight: 600; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);">
-                              Start Conversation →
-                            </a>
-                          </td>
-                        </tr>
-                      </table>
-                      
-                      <div style="border-top: 1px solid #e5e7eb; padding-top: 24px; margin-top: 32px;">
-                        <p style="margin: 0 0 8px 0; color: #6b7280; font-size: 15px;">Best of luck with your project!</p>
-                        <p style="margin: 0; color: #111827; font-size: 16px; font-weight: 600;">The Velocity Team</p>
-                      </div>
-                    </td>
-                  </tr>
-                  
-                  <tr>
-                    <td style="padding: 24px 40px; background-color: #f9fafb; border-top: 1px solid #e5e7eb;" class="mobile-padding">
-                      <p style="margin: 0 0 8px 0; color: #6b7280; font-size: 13px; text-align: center;">
-                        You're receiving this because your proposal was accepted on Velocity Fellowships.
-                      </p>
-                      <p style="margin: 0; color: #9ca3af; font-size: 12px; text-align: center;">
-                        © ${new Date().getFullYear()} Velocity. All rights reserved.
-                      </p>
-                    </td>
-                  </tr>
-                  
-                </table>
-              </td>
-            </tr>
-          </table>
-        </body>
-        </html>
+    const mailOptions = {
+      from: `"Velocity Fellowships" <${process.env.EMAIL_USER}>`,
+      to: studentEmail,
+      subject: `🎉 Congratulations! Your Proposal Has Been Accepted`,
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background: #f3f4f6; padding: 20px;">
+          <div style="background: linear-gradient(135deg, #10b981, #059669); padding: 32px; text-align: center; border-radius: 12px 12px 0 0;">
+            <div style="font-size: 40px; margin-bottom: 12px;">🎉</div>
+            <h1 style="color: white; margin: 0 0 4px 0; font-size: 24px;">Proposal Accepted!</h1>
+            <p style="color: rgba(255,255,255,0.9); margin: 0; font-size: 14px;">Great news from Velocity Fellowships</p>
+          </div>
+          <div style="background: white; padding: 28px; border-radius: 0 0 12px 12px;">
+            <p style="color: #111; font-size: 16px; font-weight: 600; margin: 0 0 16px 0;">Hello ${studentName},</p>
+            <p style="color: #555; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">Congratulations! <strong style="color: #111;">${companyName}</strong> has accepted your proposal for the challenge:</p>
+            
+            <div style="background: linear-gradient(135deg, #f0fdf4, #dcfce7); border-left: 4px solid #10b981; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
+              <h3 style="margin: 0 0 10px 0; color: #047857; font-size: 16px;">${challengeTitle}</h3>
+              <p style="margin: 4px 0; color: #065f46; font-size: 13px;">💰 <strong>Agreed Price:</strong> ₹${proposedPrice.toLocaleString()}</p>
+              <p style="margin: 4px 0; color: #065f46; font-size: 13px;">⏱️ <strong>Timeline:</strong> ${estimatedDays} day${estimatedDays > 1 ? 's' : ''}</p>
+              <p style="margin: 4px 0; color: #065f46; font-size: 13px;">🏢 <strong>Company:</strong> ${companyName}</p>
+            </div>
+            
+            ${feedback ? `<div style="background: #f9fafb; border-left: 4px solid #6366f1; padding: 16px; border-radius: 8px; margin-bottom: 20px;"><p style="margin: 0 0 6px 0; color: #4338ca; font-size: 14px; font-weight: 600;">Message from ${corporateName}:</p><p style="margin: 0; color: #555; font-size: 13px;">${feedback}</p></div>` : ''}
+            
+            <div style="background: #eff6ff; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+              <h4 style="margin: 0 0 10px 0; color: #1e40af; font-size: 14px;">📋 Next Steps:</h4>
+              <ul style="margin: 0; padding-left: 18px; color: #1e3a8a; font-size: 13px; line-height: 1.8;">
+                <li>Start a conversation with ${companyName}</li>
+                <li>Clarify requirements and deliverables</li>
+                <li>Set up milestones and checkpoints</li>
+                <li>Begin working on the project</li>
+              </ul>
+            </div>
+            
+            <div style="text-align: center; margin: 24px 0;">
+              <a href="${FRONTEND_URL}/fellowship/messages/${chatRoomId}" style="display: inline-block; background: linear-gradient(135deg, #10b981, #059669); color: white; padding: 14px 28px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 600;">Start Conversation →</a>
+            </div>
+            
+            <div style="border-top: 1px solid #e5e7eb; padding-top: 16px;">
+              <p style="color: #666; font-size: 13px; margin: 0;">Best of luck,<br><strong style="color: #111;">The Velocity Team</strong></p>
+            </div>
+          </div>
+          <p style="color: #999; font-size: 11px; text-align: center; margin-top: 16px;">© ${new Date().getFullYear()} Velocity</p>
+        </div>
       `,
-            text: `
-Congratulations ${studentName}!
+      text: `Congratulations ${studentName}!\n\nYour proposal for "${challengeTitle}" has been accepted by ${companyName}!\n\nAgreed Price: ₹${proposedPrice.toLocaleString()}\nTimeline: ${estimatedDays} days\n${feedback ? `\nMessage: ${feedback}` : ''}\n\nStart conversation: ${FRONTEND_URL}/fellowship/messages/${chatRoomId}\n\nBest,\nVelocity Team`
+    };
 
-Your proposal has been accepted by ${companyName}!
-
-Challenge: ${challengeTitle}
-Agreed Price: ₹${proposedPrice.toLocaleString()}
-Timeline: ${estimatedDays} day${estimatedDays > 1 ? 's' : ''}
-${feedback ? `\nMessage from ${corporateName}:\n${feedback}` : ''}
-
-Next Steps:
-- Start a conversation with ${companyName} to discuss project details
-- Clarify requirements and deliverables
-- Set up milestones and checkpoints
-- Begin working on the project
-
-Click here to start the conversation: ${FRONTEND_URL}/fellowship/messages/${chatRoomId}
-
-Best of luck with your project!
-The Velocity Team
-      `.trim()
-        };
-
-        const result = await sendEmail(mailOptions);
-        console.log(`✅ Proposal approval email sent to ${studentEmail}: ${result.messageId}`);
-
-        return res.status(200).json(result);
-    } catch (error) {
-        console.error('Error sending proposal approval email:', error);
-        return res.status(500).json({ error: error.message });
-    }
+    const result = await sendEmail(mailOptions);
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error('Error:', error);
+    return res.status(500).json({ error: error.message });
+  }
 }

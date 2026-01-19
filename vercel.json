@@ -1,5 +1,14 @@
 {
     "version": 2,
-    "buildCommand": "",
-    "outputDirectory": ""
+    "public": true,
+    "builds": [
+        {
+            "src": "public/**",
+            "use": "@vercel/static"
+        },
+        {
+            "src": "api/**/*.js",
+            "use": "@vercel/node"
+        }
+    ]
 }

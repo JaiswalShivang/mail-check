@@ -39,7 +39,8 @@ export default async function handler(req, res) {
             '/api/send-job-alert',
             '/api/send-job-application',
             '/api/send-matching-job',
-            '/api/send-proposal-approval'
+            '/api/send-proposal-approval',
+            '/api/send-verification'
         ]
     });
 }
